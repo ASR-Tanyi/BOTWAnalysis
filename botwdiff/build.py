@@ -122,14 +122,8 @@ def build_objects(targets: Optional[List[str]] = None, jobs: Optional[int] = Non
     return result
 
 
-def compile_scratch(source: Path, like: Optional[str] = None, build_dir: Path = paths.DECOMP_BUILD) -> Path:
-    """Compile a source file outside the decomp build with the flags of an existing decomp source.
-
-    `like` selects the reference translation unit by path suffix (default: a source in the same
-    directory as `source`, else any game source). Returns the object path.
-    """
-    source = source.resolve()
-    db = json.loads((build_dir / "compile_commands.json").read_text())
+def _scratch_command(source: Path, like: Optional[str], db: list) -> tuple:
+    """Compile arguments for `source` derived from a decomp entry. Returns (args, entry, out)."""
     entry = None
     if like:
         cands = [e for e in db if e["file"].endswith(like)]
@@ -160,6 +154,56 @@ def compile_scratch(source: Path, like: Optional[str] = None, build_dir: Path = 
             continue
         else:
             fixed.append(arg)
+    return fixed, entry, out
+
+
+SCRATCH_DIR = paths.ROOT / "scratch"
+SCRATCH_EXTS = (".cpp", ".cc", ".cxx")
+
+
+def write_scratch_compdb(extra: Optional[Path] = None, like: Optional[str] = None,
+                         build_dir: Path = paths.DECOMP_BUILD) -> Path:
+    """Write <root>/compile_commands.json so clangd resolves decomp includes in scratch sources.
+
+    Covers scratch/**/*.cpp plus `extra` (compiled with `like` flags). Existing entries are kept,
+    so a `--like` choice persists. clangd infers commands for new files in scratch/ from the
+    neighbouring entries until the database is regenerated.
+    """
+    db = json.loads((build_dir / "compile_commands.json").read_text())
+    dest = paths.ROOT / "compile_commands.json"
+    entries = {}
+    if dest.is_file() and not dest.is_symlink():
+        try:
+            entries = {e["file"]: e for e in json.loads(dest.read_text()) if Path(e["file"]).is_file()}
+        except (ValueError, KeyError, TypeError):
+            entries = {}
+    sources = [p.resolve() for p in sorted(SCRATCH_DIR.rglob("*")) if p.suffix in SCRATCH_EXTS]
+    if extra is not None:
+        extra = extra.resolve()
+        entries.pop(str(extra), None)
+        sources.append(extra)
+    for src in sources:
+        if str(src) in entries:
+            continue
+        args, entry, out = _scratch_command(src, like if src == extra else None, db)
+        entries[str(src)] = {"directory": entry["directory"], "arguments": args,
+                             "file": str(src), "output": str(out)}
+    if dest.is_symlink():
+        dest.unlink()
+    dest.write_text(json.dumps(sorted(entries.values(), key=lambda e: e["file"]), indent=2) + "\n")
+    return dest
+
+
+def compile_scratch(source: Path, like: Optional[str] = None, build_dir: Path = paths.DECOMP_BUILD) -> Path:
+    """Compile a source file outside the decomp build with the flags of an existing decomp source.
+
+    `like` selects the reference translation unit by path suffix (default: a source in the same
+    directory as `source`, else any game source). Returns the object path.
+    """
+    source = source.resolve()
+    db = json.loads((build_dir / "compile_commands.json").read_text())
+    fixed, entry, out = _scratch_command(source, like, db)
+    write_scratch_compdb(source, like, build_dir)
     if shutil.which("ccache"):
         fixed.insert(0, shutil.which("ccache"))
     print(f"compiling {source} (flags of {Path(entry['file']).relative_to(paths.DECOMP)})")

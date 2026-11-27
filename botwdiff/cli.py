@@ -20,6 +20,7 @@ def cmd_setup(args) -> int:
     prepare.prepare_target(Path(args.nso) if args.nso else paths.ORIGINAL_NSO)
     build.setup_clang()
     build.configure()
+    print(f"wrote {build.write_scratch_compdb()}")
     if args.build:
         return cmd_build(argparse.Namespace(jobs=args.jobs, targets=[]))
     return 0
@@ -314,6 +315,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     s.add_argument("targets", nargs="*", help="ninja object targets (default: all)")
     s.add_argument("-j", "--jobs", type=int)
     s.set_defaults(func=cmd_build)
+
+    s = sub.add_parser("clangd", help="write compile_commands.json for scratch/ sources (clangd)")
+    s.set_defaults(func=lambda args: print(f"wrote {build.write_scratch_compdb()}"))
 
     s = sub.add_parser("list", help="search functions in uking_functions.csv")
     s.add_argument("query", nargs="?")

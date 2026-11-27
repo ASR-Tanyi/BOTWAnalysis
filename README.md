@@ -115,6 +115,10 @@ to `build/scratch/`. If the CSV name differs from your function's mangled name, 
 `--symbol <mangled>`. If the file defines exactly one function, it is picked automatically.
 The example above matches all 8 instructions.
 
+For clangd, `setup`, `diff --source` and `./botwdiff.sh clangd` write `compile_commands.json`
+in this directory with an entry per `scratch/**/*.cpp`, which `.clangd` points at. New files in
+`scratch/` get their flags from neighbouring entries until it is regenerated.
+
 ### Option B: inside botw-code
 
 1. Implement the function in the right source file in `../botw-code/src/...`. If the file is new,

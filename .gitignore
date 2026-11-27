@@ -1,5 +1,11 @@
+# python
 .venv/
+__pycache__/
+
+# build
 build/
 toolchain/
-__pycache__/
+
+# .clangd
 compile_commands.json
+.cache/
