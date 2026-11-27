@@ -9,3 +9,7 @@ toolchain/
 # .clangd
 compile_commands.json
 .cache/
+
+# exe
+external/ExeFS/*
+!external/ExeFS/README.md

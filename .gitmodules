@@ -1,0 +1,3 @@
+[submodule "external/botw"]
+	path = external/botw
+	url = https://github.com/zeldaret/botw

@@ -1,11 +1,11 @@
 # botw-analysis
 
 Side-by-side AArch64 comparison of functions in the *Breath of the Wild* executable against the
-[zeldaret/botw](https://github.com/zeldaret/botw) decompilation in `../botw-code`.
+[zeldaret/botw](https://github.com/zeldaret/botw) decompilation, a submodule at `external/botw`.
 
 The decompilation targets v1.5.0. `setup` decompresses the shipped v1.9.0 `main` NSO and applies the
 project's published xdelta3 downgrade patch. It then checks the result against the v1.5.0 hash that
-`botw-code/tools/setup.py` uses. The decompilation is compiled with Clang 4.0.1 through CMake,
+`external/botw/tools/setup.py` uses. The decompilation is compiled with Clang 4.0.1 through CMake,
 Ninja and ccache. Only object files are built, because the comparison reads code and relocations
 straight from each object, so no linker is needed.
 
@@ -13,7 +13,8 @@ straight from each object, so no linker is needed.
 
 - Python 3.9 or newer. The packages in [requirements.txt](requirements.txt) install with pip
 - `cmake` 3.30 or newer, `ninja`, `ccache` (optional) and `xdelta3` on `PATH`
-- `../botw-code` checked out with submodules (`git submodule update --init --recursive`)
+- Submodules checked out recursively: `git submodule update --init --recursive`
+- The game's `main` NSO at `external/ExeFS/main`. See [external/ExeFS/README.md](external/ExeFS/README.md)
 - On Apple silicon, Rosetta 2. LLVM published Clang 4.0.1 for macOS as x86-64 only
 
 ## Setup
@@ -28,7 +29,7 @@ do this yourself with `python3 -m venv .venv && .venv/bin/pip install -r require
 
 `setup` does the following:
 
-1. Reads `../botw/01007EF00011E000_build/mac15/extract/v1114112/ExeFS/main`. Pass `--nso PATH` to
+1. Reads `external/ExeFS/main`. Pass `--nso PATH` to
    use another 1.5.0, 1.6.0 or 1.9.0 NSO.
 2. Writes `build/target/main.v150.nso`. The patch download is cached next to it.
 3. Downloads Clang 4.0.1 into `toolchain/clang-4.0.1`.
@@ -77,7 +78,7 @@ found in the compiled objects.
 
 `verify` performs three independent checks:
 
-1. `build/target/main.v150.nso` still has the v1.5.0 SHA-256 from `botw-code/tools/setup.py`.
+1. `build/target/main.v150.nso` still has the v1.5.0 SHA-256 from `external/botw/tools/setup.py`.
 2. Every instruction word shown on the left is read again from the NSO file at its file offset
    (`segment.file_offset + addr - 0x7100000000 - segment.mem_offset`), without the image loader,
    and compared with the decoded word. You can check any function by hand with the printed
@@ -87,7 +88,7 @@ found in the compiled objects.
    instruction. Two LLVM 4 alias spellings count as equal: `orr wN, wzr, #imm` for `mov wN, #imm`,
    and `ins` for `mov v.T[i], v.T[j]`.
 
-At `botw-code` `4b2694e2`, all 113,491 functions passed: 6,291,627 words, with no byte mismatches
+At `external/botw` `4b2694e2`, all 113,491 functions passed: 6,291,627 words, with no byte mismatches
 and no LLVM disagreements. The full run takes about 100 seconds.
 
 ## Add a new function and compare it
@@ -100,7 +101,7 @@ them:
 ./botwdiff.sh diff _ZN4ksys3map15PlacementActors14getStaticObj_0Ei
 ```
 
-### Option A: scratch file, botw-code untouched
+### Option A: scratch file, decomp untouched
 
 Write a `.cpp` file anywhere. [scratch/example_getStaticObj_0.cpp](scratch/example_getStaticObj_0.cpp)
 is an example. Then compile it with the exact flags of an existing decomp source and compare:
@@ -120,14 +121,14 @@ For clangd, `setup`, `diff --source` and `./botwdiff.sh clangd` write `compile_c
 in this directory with an entry per `scratch/**/*.cpp`, which `.clangd` points at. New files in
 `scratch/` get their flags from neighbouring entries until it is regenerated.
 
-### Option B: inside botw-code
+### Option B: inside the decomp
 
-1. Implement the function in the right source file in `../botw-code/src/...`. If the file is new,
+1. Implement the function in the right source file in `external/botw/src/...`. If the file is new,
    add it to that directory's `CMakeLists.txt` under `target_sources(uking PRIVATE ...)`.
 2. Run `./botwdiff.sh diff <function>`. It rebuilds the function's object with Ninja and ccache,
    or the whole tree if the symbol is not indexed yet. CMake reconfigures itself when a
    `CMakeLists.txt` changed. Then iterate on the source until the verdict is `match`.
-3. Update the function's row in `../botw-code/data/uking_functions.csv`: set the quality to `O`
+3. Update the function's row in `external/botw/data/uking_functions.csv`: set the quality to `O`
    (or `m`/`M`/`W`) and the name to the mangled symbol. `diff` looks up the decomp side by that
    name. Until you update the row, pass `--symbol` to `diff`.
 4. Run `./botwdiff.sh check` to make sure the other functions in the file still match.
@@ -135,7 +136,7 @@ in this directory with an entry per `scratch/**/*.cpp`, which `.clangd` points a
 ## How the comparison works
 
 The original instructions come from the v1.5.0 image. The function boundaries come from
-`botw-code/data/uking_functions.csv`. Decomp instructions come from each function's section in its
+`external/botw/data/uking_functions.csv`. Decomp instructions come from each function's section in its
 object. Instructions that the linker fills in are rendered by what they reference, not by raw
 encodings, so the two sides can be compared directly:
 
@@ -170,7 +171,7 @@ From those rows, each function gets one of these verdicts:
 
 ## Results
 
-At `botw-code` commit `4b2694e2`, with every object built:
+At `external/botw` commit `4b2694e2`, with every object built:
 
 | CSV quality | match | match? | data | regswap | mismatch |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -203,5 +204,5 @@ The 63 `O` functions this tool reports as mismatching mostly fall into three gro
 These environment variables override the default paths: `BOTW_NSO`, `BOTW_DECOMP`,
 `BOTW_ANALYSIS_WORK`, `BOTW_ANALYSIS_TOOLCHAIN` and `UKING_CLANG`.
 
-Game files and derived binaries stay under `build/`, which is ignored by Git, so nothing from the
-game is committed.
+Game files and derived binaries stay under `external/ExeFS/` and `build/`, which are ignored by
+Git, so nothing from the game is committed.

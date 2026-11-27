@@ -63,14 +63,24 @@ def _require(tool: str) -> str:
 
 
 def configure(build_dir: Path = paths.DECOMP_BUILD, clang: Path = paths.CLANG_DIR) -> None:
-    if (build_dir / "build.ninja").is_file():
-        print(f"build directory already configured: {build_dir}")
-        return
     if not (clang / "bin" / "clang++").exists():
         raise SystemExit(f"clang 4.0.1 missing at {clang}; run `setup` first")
     toolchain = paths.DECOMP / "toolchain" / "ToolchainNX64.cmake"
-    if not toolchain.is_file():
-        raise SystemExit(f"{toolchain} missing (is botw-code checked out with submodules?)")
+    if not toolchain.is_file() or not (paths.DECOMP / "lib" / "sead" / "CMakeLists.txt").is_file():
+        raise SystemExit(f"{paths.DECOMP} is incomplete; run `git submodule update --init --recursive`")
+    cache = build_dir / "CMakeCache.txt"
+    if cache.is_file():
+        home = next((line.split("=", 1)[1].strip() for line in cache.read_text().splitlines()
+                     if line.startswith("CMAKE_HOME_DIRECTORY:")), None)
+        if home is not None and Path(home).resolve() != paths.DECOMP.resolve():
+            # CMake refuses to reuse a cache generated for another source tree.
+            print(f"{build_dir} was configured for {home}; reconfiguring for {paths.DECOMP}")
+            cache.unlink()
+            shutil.rmtree(build_dir / "CMakeFiles", ignore_errors=True)
+            (build_dir / "build.ninja").unlink(missing_ok=True)
+    if (build_dir / "build.ninja").is_file():
+        print(f"build directory already configured: {build_dir}")
+        return
     cmd = [
         _require("cmake"), "-S", str(paths.DECOMP), "-B", str(build_dir), "-G", "Ninja",
         "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
@@ -174,7 +184,8 @@ def write_scratch_compdb(extra: Optional[Path] = None, like: Optional[str] = Non
     entries = {}
     if dest.is_file() and not dest.is_symlink():
         try:
-            entries = {e["file"]: e for e in json.loads(dest.read_text()) if Path(e["file"]).is_file()}
+            entries = {e["file"]: e for e in json.loads(dest.read_text())
+                       if Path(e["file"]).is_file() and any(str(paths.DECOMP) in a for a in e["arguments"])}
         except (ValueError, KeyError, TypeError):
             entries = {}
     sources = [p.resolve() for p in sorted(SCRATCH_DIR.rglob("*")) if p.suffix in SCRATCH_EXTS]

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import nso, paths
 
-# Hashes from botw-code/tools/setup.py
+# Hashes from external/botw/tools/setup.py
 UNCOMPRESSED_V150 = "d9fa308d0ee7c0ab081c66d987523385e1afe06f66731bbfa32628438521c106"
 KNOWN = {
     "898dc199301f7c419be5144bb5cb27e2fc346e22b27345ba3fb40c0060c2baf8": ("1.5.0", True),

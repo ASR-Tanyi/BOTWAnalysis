@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-NS = ROOT.parent
+EXTERNAL = ROOT / "external"
 
 
 def _env_path(name: str, default: Path) -> Path:
@@ -14,13 +14,10 @@ def _env_path(name: str, default: Path) -> Path:
     return Path(value).expanduser().resolve() if value else default
 
 
-# Compressed v1.9.0 main NSO extracted from the update NSP.
-ORIGINAL_NSO = _env_path(
-    "BOTW_NSO",
-    NS / "botw" / "01007EF00011E000_build" / "mac15" / "extract" / "v1114112" / "ExeFS" / "main",
-)
-# Checkout of https://github.com/zeldaret/botw
-DECOMP = _env_path("BOTW_DECOMP", NS / "botw-code")
+# main NSO from the game's ExeFS (1.5.0, 1.6.0 or 1.9.0), supplied by the user.
+ORIGINAL_NSO = _env_path("BOTW_NSO", EXTERNAL / "ExeFS" / "main")
+# Submodule checkout of https://github.com/zeldaret/botw
+DECOMP = _env_path("BOTW_DECOMP", EXTERNAL / "botw")
 
 WORK = _env_path("BOTW_ANALYSIS_WORK", ROOT / "build")
 TARGET_DIR = WORK / "target"
