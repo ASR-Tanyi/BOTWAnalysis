@@ -1,0 +1,4 @@
+lz4>=4.3
+capstone>=5.0.1
+pyelftools>=0.31
+cxxfilt>=0.3
