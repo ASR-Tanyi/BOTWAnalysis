@@ -47,31 +47,57 @@ def _pick(target: Target, query: str) -> Function:
     return found[0]
 
 
-def _diff_one(target: Target, index: objfile.ObjectIndex, fn: Function):
+def _diff_one(target: Target, index: objfile.ObjectIndex, fn: Function, symbol: Optional[str] = None):
     left = target.disasm(fn)
-    entry = index.find(fn.name) if fn.name else None
+    name = symbol or fn.name
+    entry = index.find(name) if name else None
     if entry is None:
         return left, None, None
     obj, (shndx, value, size, _weak) = entry
     with objfile.ObjectFile(obj) as of:
-        right = of.function(fn.name, shndx, value, size)
+        right = of.function(name, shndx, value, size)
+    return left, right, compare.compare(left, right.insns)
+
+
+def _diff_scratch(target: Target, fn: Function, obj: Path, symbol: Optional[str]):
+    _path, _mtime, funcs = objfile._scan(str(obj))
+    name = symbol or fn.name
+    if name not in funcs:
+        strong = [n for n, e in funcs.items() if not e[3]]
+        if symbol is None and len(strong) == 1:
+            name = strong[0]
+        else:
+            print(f"{obj} defines {len(funcs)} function(s):", file=sys.stderr)
+            for n in sorted(funcs):
+                print(f"  {n}  ({demangle(n)})", file=sys.stderr)
+            raise SystemExit(f"{name or 'no CSV name'} is not defined there; pass --symbol")
+    shndx, value, size, _weak = funcs[name]
+    left = target.disasm(fn)
+    with objfile.ObjectFile(str(obj)) as of:
+        right = of.function(name, shndx, value, size)
     return left, right, compare.compare(left, right.insns)
 
 
 def cmd_diff(args) -> int:
     target = Target()
     fn = _pick(target, args.function)
-    index = objfile.ObjectIndex.load_or_update(verbose=False)
-    if not args.no_build and fn.name:
-        entry = index.find(fn.name)
-        if entry is not None:
-            if build.build_objects([index.ninja_target(entry[0])], keep_going=False):
-                return 1
-        else:
-            build.build_objects()
+    if args.source:
+        obj = build.compile_scratch(Path(args.source), args.like)
+        left, right, result = _diff_scratch(target, fn, obj, args.symbol)
+        index = None
+    else:
+        name = args.symbol or fn.name
         index = objfile.ObjectIndex.load_or_update(verbose=False)
+        if not args.no_build and name:
+            entry = index.find(name)
+            if entry is not None:
+                if build.build_objects([index.ninja_target(entry[0])], keep_going=False):
+                    return 1
+            else:
+                build.build_objects()
+            index = objfile.ObjectIndex.load_or_update(verbose=False)
+        left, right, result = _diff_one(target, index, fn, args.symbol)
 
-    left, right, result = _diff_one(target, index, fn)
     title = demangle(fn.display) if not args.mangled else fn.display
     header_left = f"original {fn.addr:#x} ({fn.size:#x} bytes)"
     if right is None:
@@ -80,10 +106,12 @@ def cmd_diff(args) -> int:
         for insn in left:
             print(f"{fn.addr + insn.offset:x}: {insn.text}")
         return 2
-    source = index.sources.get(right.obj, right.obj)
+    source = args.source or index.sources.get(right.obj, right.obj)
     header_right = f"decomp {Path(source).name}"
     meta = [fn.display, f"quality: {fn.quality} ({QUALITY.get(fn.quality, '?')})",
             f"source: {source}", f"object: {right.obj}"]
+    if right.name != fn.name:
+        meta.append(f"decomp symbol: {right.name}")
 
     if args.html:
         out = Path(args.html)
@@ -237,6 +265,41 @@ def _write_report(out: Path, target: Target, index: objfile.ObjectIndex, rows: L
     print(f"wrote {out / 'index.html'} ({written} diff pages)")
 
 
+# --------------------------------------------------------------------------- verify
+
+
+def cmd_verify(args) -> int:
+    from . import verify
+
+    target = Target()
+    ok_hash = verify.check_hash()
+    print(f"{paths.TARGET_NSO}: sha256 {'matches' if ok_hash else 'DOES NOT match'} v1.5.0")
+    if args.functions:
+        fns = [_pick(target, q) for q in args.functions]
+    else:
+        fns = [fn for fn in target.functions if fn.quality in args.quality]
+        if args.limit:
+            fns = fns[: args.limit]
+    reports = verify.verify(target, fns, llvm=not args.no_llvm)
+    words = sum(r.words for r in reports)
+    bad_bytes = [r for r in reports if r.byte_mismatches]
+    bad_llvm = [r for r in reports if r.llvm_mismatches]
+    for r in reports if args.functions else []:
+        fn = r.fn
+        print(f"{fn.addr:#x} {demangle(fn.display)}")
+        print(f"  file offset {r.file_offset:#x}, {r.words} words  "
+              f"(xxd -s {r.file_offset:#x} -l {fn.size} {paths.TARGET_NSO})")
+    for r in (bad_bytes + bad_llvm)[: args.show]:
+        for off, fw, dw in r.byte_mismatches[:5]:
+            print(f"  BYTES {r.fn.addr + off:#x}: file {fw:08x} decoded {dw:08x}")
+        for off, cs, lv in r.llvm_mismatches[:5]:
+            print(f"  LLVM  {r.fn.addr + off:#x}: capstone '{cs}' llvm '{lv}'")
+    print(f"{len(reports)} function(s), {words} instruction words: "
+          f"{len(bad_bytes)} with byte mismatches, "
+          + ("LLVM check skipped" if args.no_llvm else f"{len(bad_llvm)} where LLVM disagrees with capstone"))
+    return 0 if ok_hash and not bad_bytes and not bad_llvm else 1
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     p = argparse.ArgumentParser(prog="botwdiff", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -268,7 +331,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     s.add_argument("-w", "--width", type=int, help="total output width")
     s.add_argument("--mangled", action="store_true")
     s.add_argument("--no-color", action="store_true")
+    s.add_argument("-s", "--symbol", help="decomp symbol to compare against (default: the CSV name)")
+    s.add_argument("--source", help="compile this .cpp outside the decomp build and compare against it")
+    s.add_argument("--like", help="with --source: reuse compile flags of the decomp source ending with this path")
     s.set_defaults(func=cmd_diff)
+
+    s = sub.add_parser("verify", help="check decoded original instructions against the NSO bytes and LLVM")
+    s.add_argument("functions", nargs="*", help="functions to verify (default: all with --quality)")
+    s.add_argument("-q", "--quality", default="OmMWUL", help="CSV quality letters when no functions are given")
+    s.add_argument("-n", "--limit", type=int, help="verify only the first N selected functions")
+    s.add_argument("--no-llvm", action="store_true", help="only compare bytes, skip the LLVM disassembly check")
+    s.add_argument("--show", type=int, default=20, help="how many failing functions to print")
+    s.set_defaults(func=cmd_verify)
 
     s = sub.add_parser("check", help="compare many functions and summarize")
     s.add_argument("-q", "--quality", default="OmMW", help="CSV quality letters to check (default OmMW)")

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import shlex
 import shutil
 import subprocess
 import tarfile
@@ -119,3 +120,50 @@ def build_objects(targets: Optional[List[str]] = None, jobs: Optional[int] = Non
     for i in range(0, len(targets), 1000):
         result = subprocess.call(cmd + targets[i : i + 1000]) or result
     return result
+
+
+def compile_scratch(source: Path, like: Optional[str] = None, build_dir: Path = paths.DECOMP_BUILD) -> Path:
+    """Compile a source file outside the decomp build with the flags of an existing decomp source.
+
+    `like` selects the reference translation unit by path suffix (default: a source in the same
+    directory as `source`, else any game source). Returns the object path.
+    """
+    source = source.resolve()
+    db = json.loads((build_dir / "compile_commands.json").read_text())
+    entry = None
+    if like:
+        cands = [e for e in db if e["file"].endswith(like)]
+        if not cands:
+            raise SystemExit(f"no decomp source ends with {like!r}")
+        entry = cands[0]
+    else:
+        same_dir = [e for e in db if Path(e["file"]).parent == source.parent]
+        game = [e for e in db if e["file"].startswith(str(paths.DECOMP / "src") + "/")]
+        entry = (same_dir or game or db)[0]
+
+    args = shlex.split(entry["command"])
+    out = paths.WORK / "scratch" / (source.stem + ".o")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fixed: List[str] = []
+    skip = False
+    for i, arg in enumerate(args):
+        if skip:
+            skip = False
+            continue
+        if arg == "-o":
+            fixed += ["-o", str(out)]
+            skip = True
+        elif arg == "-c":
+            fixed += ["-c", str(source)]
+            skip = True
+        elif arg.startswith(("-MD", "-MT", "-MF")) or (i > 0 and args[i - 1] in ("-MT", "-MF")):
+            continue
+        else:
+            fixed.append(arg)
+    if shutil.which("ccache"):
+        fixed.insert(0, shutil.which("ccache"))
+    print(f"compiling {source} (flags of {Path(entry['file']).relative_to(paths.DECOMP)})")
+    rc = subprocess.call(fixed, cwd=entry["directory"])
+    if rc:
+        raise SystemExit(rc)
+    return out

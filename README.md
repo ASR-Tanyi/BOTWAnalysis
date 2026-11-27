@@ -66,6 +66,67 @@ and asks you to be more specific.
 `diff` exits with 0 for `match` and `match?`, 1 for any other verdict and 2 if the function was not
 found in the compiled objects.
 
+## Verify the original side against the NSO
+
+```sh
+./botwdiff.sh verify 0x710096f268          # one or more functions; prints file offset + xxd command
+./botwdiff.sh verify                       # every function in uking_functions.csv
+./botwdiff.sh verify -q O --no-llvm        # bytes only, O functions only
+```
+
+`verify` performs three independent checks:
+
+1. `build/target/main.v150.nso` still has the v1.5.0 SHA-256 from `botw-code/tools/setup.py`.
+2. Every instruction word shown on the left is read again from the NSO file at its file offset
+   (`segment.file_offset + addr - 0x7100000000 - segment.mem_offset`), without the image loader,
+   and compared with the decoded word. You can check any function by hand with the printed
+   `xxd -s <offset> -l <size>` command.
+3. All words are wrapped in `.inst` directives, assembled by Clang 4.0.1 and disassembled by its
+   `llvm-objdump`. LLVM must agree with capstone on the mnemonic and registers of every
+   instruction. Two LLVM 4 alias spellings count as equal: `orr wN, wzr, #imm` for `mov wN, #imm`,
+   and `ins` for `mov v.T[i], v.T[j]`.
+
+At `botw-code` `4b2694e2`, all 113,491 functions passed: 6,291,627 words, with no byte mismatches
+and no LLVM disagreements. The full run takes about 100 seconds.
+
+## Add a new function and compare it
+
+Functions marked `U` in the CSV are not decompiled yet. `diff` still shows the original side for
+them:
+
+```sh
+./botwdiff.sh list -q U PlacementActors::
+./botwdiff.sh diff _ZN4ksys3map15PlacementActors14getStaticObj_0Ei
+```
+
+### Option A: scratch file, botw-code untouched
+
+Write a `.cpp` file anywhere. [scratch/example_getStaticObj_0.cpp](scratch/example_getStaticObj_0.cpp)
+is an example. Then compile it with the exact flags of an existing decomp source and compare:
+
+```sh
+./botwdiff.sh diff _ZN4ksys3map15PlacementActors14getStaticObj_0Ei \
+    --source scratch/example_getStaticObj_0.cpp --like Map/mapPlacementActors.cpp
+```
+
+`--like` selects whose compile command to copy: include paths, defines, `-O3`, `-mcpu` and so on.
+Without it, the tool uses a source from the same directory, or any game source. The object goes
+to `build/scratch/`. If the CSV name differs from your function's mangled name, pass
+`--symbol <mangled>`. If the file defines exactly one function, it is picked automatically.
+The example above matches all 8 instructions.
+
+### Option B: inside botw-code
+
+1. Implement the function in the right source file in `../botw-code/src/...`. If the file is new,
+   add it to that directory's `CMakeLists.txt` under `target_sources(uking PRIVATE ...)`.
+2. Run `./botwdiff.sh diff <function>`. It rebuilds the function's object with Ninja and ccache,
+   or the whole tree if the symbol is not indexed yet. CMake reconfigures itself when a
+   `CMakeLists.txt` changed. Then iterate on the source until the verdict is `match`.
+3. Update the function's row in `../botw-code/data/uking_functions.csv`: set the quality to `O`
+   (or `m`/`M`/`W`) and the name to the mangled symbol. `diff` looks up the decomp side by that
+   name. Until you update the row, pass `--symbol` to `diff`.
+4. Run `./botwdiff.sh check` to make sure the other functions in the file still match.
+
 ## How the comparison works
 
 The original instructions come from the v1.5.0 image. The function boundaries come from
@@ -131,7 +192,8 @@ The 63 `O` functions this tool reports as mismatching mostly fall into three gro
 | [botwdiff/disasm.py](botwdiff/disasm.py) | Capstone disassembly and symbolic operand rendering |
 | [botwdiff/compare.py](botwdiff/compare.py) | Alignment and row classification |
 | [botwdiff/render.py](botwdiff/render.py) | Terminal and HTML side-by-side output |
-| [botwdiff/cli.py](botwdiff/cli.py) | `setup`, `build`, `list`, `diff` and `check` commands |
+| [botwdiff/verify.py](botwdiff/verify.py) | NSO byte and LLVM cross-checks for the original side |
+| [botwdiff/cli.py](botwdiff/cli.py) | `setup`, `build`, `list`, `diff`, `check` and `verify` commands |
 
 These environment variables override the default paths: `BOTW_NSO`, `BOTW_DECOMP`,
 `BOTW_ANALYSIS_WORK`, `BOTW_ANALYSIS_TOOLCHAIN` and `UKING_CLANG`.
