@@ -44,6 +44,7 @@ automatically.
 # Find functions by mangled name, demangled substring or address
 ./botwdiff.sh list PauseMenuDataMgr::addToPouch
 ./botwdiff.sh list -q mM Actor          # filter by CSV quality letters
+./botwdiff.sh list -a 0x7100c80000 -n 20   # 20 functions from an address (or offset 0xc80000)
 
 # Side-by-side diff in the terminal. Rebuilds the object first unless --no-build is given
 ./botwdiff.sh diff 0x710096f268

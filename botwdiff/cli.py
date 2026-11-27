@@ -12,7 +12,7 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from . import build, compare, objfile, paths, prepare, render
+from . import build, compare, nso, objfile, paths, prepare, render
 from .target import QUALITY, Function, Target, demangle
 
 
@@ -135,6 +135,11 @@ def cmd_list(args) -> int:
     target = Target()
     index = objfile.ObjectIndex.load_or_update(verbose=False) if (paths.DECOMP_BUILD / "compile_commands.json").is_file() else None
     found = target.lookup(args.query) if args.query else target.functions
+    if args.start:
+        start = int(args.start, 16)
+        if start < nso.BASE:
+            start += nso.BASE
+        found = sorted((fn for fn in found if fn.addr + fn.size > start), key=lambda fn: fn.addr)
     if args.quality:
         found = [fn for fn in found if fn.quality in args.quality]
     for fn in found[: args.limit]:
@@ -322,6 +327,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     s = sub.add_parser("list", help="search functions in uking_functions.csv")
     s.add_argument("query", nargs="?")
     s.add_argument("-q", "--quality", help="filter by quality letters, e.g. OmM")
+    s.add_argument("-a", "--from", dest="start", metavar="ADDR",
+                   help="start at this hex address (0x71... or offset), including the function containing it")
     s.add_argument("-n", "--limit", type=int, default=50)
     s.set_defaults(func=cmd_list)
 
